@@ -4,81 +4,199 @@ from dotenv import load_dotenv
 import os
 
 import api
+import data
+import util
 
 intents = discord.Intents.default()
-intents.message_content = True 
+intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
+
 @bot.hybrid_command(name="ping", description="Check the bot's latency")
 async def ping(ctx: commands.Context):
+    '''Check the bot's latency and respond with "Pong!" and the latency in milliseconds.'''
     await ctx.send(f"Pong! (in {round(bot.latency * 1000)}ms)")
+
 
 @bot.hybrid_command(name="join", description="Add yourself to a team")
 async def join(ctx: commands.Context, team_number: str):
-    role = discord.utils.get(ctx.guild.roles, name=team_number)
-
-    if not role:
-        await ctx.send(f"Team role doesn't exist")
+    '''
+    Add yourself to a team. If the team doesn't have a role in the server, it will be created.
+    
+    Args:
+        team_number (str): The number of the team to join as a string.
+    '''
+    team_info: util.Team = await data.get_team(ctx, team_number)
+    if not team_info:
+        await ctx.send(f"Team {team_number} not found.")
         return
+    
+    # TODO: Create role if it doesn't exist
+    role:discord.Role = await util.get_role(ctx, team_number)
+    if not role: return
 
-    if role in ctx.author.roles:
+    if util.check_user_has_role(ctx, role):
         await ctx.send(f"You are already on team {team_number}!")
         return
-        
-    try:
-        await ctx.author.add_roles(role)
-        await ctx.send(f"You have been added to team {team_number}!")
-    except discord.Forbidden:
-        await ctx.send("I don't have perms :(")
+
+    await util.add_role_to_user(ctx, role, verbose=False)
+    league_role: discord.Role = await util.get_role(ctx, util.LEAGUE_ID_KEY.get(team_info.league))
+    await util.add_role_to_user(ctx, league_role, verbose=False)
+    await ctx.send(f"You have been added to team {team_number} and the {util.LEAGUE_ID_KEY.get(team_info.league)} league!")
+    return
+
 
 @bot.hybrid_command(name="leave", description="Remove yourself from a team")
 async def leave(ctx: commands.Context, team_number: str):
-    role = discord.utils.get(ctx.guild.roles, name=str(team_number))
+    '''
+    Remove yourself from a team. You must be on the team to leave it.
 
-    if not role:
-        await ctx.send(f"Team role doesn't exist")
+    Args:
+        team_number (str): The number of the team to leave as a string.
+    '''
+    team_info: util.Team = await data.get_team(ctx, team_number)
+    if not team_info:
+        await ctx.send(f"Team {team_number} not found.")
         return
 
-    if role not in ctx.author.roles:
-        await ctx.send(f"You are not on team {team_number}!")
+    role: discord.Role = await util.get_role(ctx, team_number)
+    if not role: return
+
+    if not util.check_user_has_role(ctx, role):
+        await ctx.send(f"You aren't on team {team_number}!")
+        return
+    
+    await util.remove_role_from_user(ctx, role, verbose=False)
+    league_role: discord.Role = await util.get_role(ctx, util.LEAGUE_ID_KEY.get(team_info.league))
+    if league_role: 
+        await util.remove_role_from_user(ctx, league_role, verbose=False)
+    await ctx.send(f"You have been removed from team {team_number} and the {util.LEAGUE_ID_KEY.get(team_info.league)} league!")
+
+    return
+
+
+@bot.hybrid_command(name="members", description="List members of a team")
+async def members(ctx: commands.Context, team_number: str):
+    '''
+    List members of a team, including alumni. If the team has a role in the server, 
+    the embed will be colored to match the role's color.
+
+    Args:
+        team_number (str): The number of the team to list members for as a string.
+    '''
+    role: discord.Role = await util.get_role(ctx, team_number)
+    if not role: return
+    alum_role: discord.Role = await util.get_role(ctx, "Alumni")
+    if not alum_role: return
+
+    members = []
+    alumni_members = []
+    for member in role.members:
+        member_string = f"**{member.display_name}** ({member.name})".replace("||", "|") # Prevent spoilers
+        if alum_role not in member.roles:
+            members.append(member_string)
+        else:
+            alumni_members.append(member_string)
+
+    if not members and not alumni_members:
+        await ctx.send(f"No members found on team {team_number}.")
         return
 
-    try:
-        await ctx.author.remove_roles(role)
-        await ctx.send(f"You have been removed from team {team_number}!")
-    except discord.Forbidden:
-        await ctx.send("I don't have perms :(")
+    embed = util.Embed(
+        title=f"Team {team_number}",
+        description=f"{len(members)} member(s) and {len(alumni_members)} alumni found",
+        color=role.color
+    )
+
+    if members:
+        embed.add_field(name="Members:", value="\n".join(members))
+        
+    if alumni_members:
+        embed.add_field(name="Alumni:", value="\n".join(alumni_members))
+
+    await embed.send(ctx)
+
 
 @bot.hybrid_command(name="team", description="Show information about a team")
-async def info(ctx: commands.Context, team_number: str):
-    team_info = api.get_team_info(team_number)
+async def team(ctx: commands.Context, team_number: str):
+    '''
+    Show information about a team, including its name, location, league, website, rookie year, and sponsors.
+    If the team has a role in the server, the embed will be colored to match the role's color.
 
-    if not team_info:
-        await ctx.send(f"Could not retrieve information for team {team_number}.")
+    Args:
+        team_number (str): The number of the team to show information about as a string.
+    '''
+    team: util.Team = await data.get_team(ctx, team_number)
+    if not team:
+        await ctx.send(f"Team {team_number} not found.")
         return
-
-    embed = discord.Embed(
-        description=team_info.get("nameShort", "Team name not available."),
+    
+    role: discord.Role = await util.get_role(ctx, team.number, verbose=False) # May or may not exist
+    embed = util.Embed(
         title=f"Team {team_number}",
-        color=discord.Color.random()
+        description=team.name,
+        color=role.color if role else util.DEFAULT_ROLE_COLOR
     )
     
-    embed.add_field(name="Location", value=team_info.get("displayLocation", "Location not available."), inline=False)
-    embed.add_field(name="Website", value=team_info.get("website", "Website not available."), inline=False)
-    embed.add_field(name="Rookie Year", value=team_info.get("rookieYear", "Rookie year not available."), inline=False)
-    embed.add_field(name="Sponsors", value=team_info.get("nameFull", "Sponsors not available."), inline=False)
+    embed.add_field(name="Location", value=team.location)
+    embed.add_field(name="League", value=util.LEAGUE_ID_KEY.get(team.league, "League not available."))
+    embed.add_field(name="Website", value=team.website)
+    embed.add_field(name="Rookie Year", value=team.rookie_year)
+    embed.add_field(name="Sponsors", value=team.sponsors)
+    embed.add_field(name="Members", value=f"Use `!members {team.number}` to see a list of team members.")
+
+    await embed.send(ctx)
+
+
+@bot.hybrid_command(name="league", description="Shows the teams in a league")
+async def league(ctx: commands.Context, league_id: str):
+    '''
+    Show the teams in a league, including their team numbers and names.
+
+    Args:
+        league_id (str): The ID of the league to show teams for as a string.
+    '''
+    if not await util.is_valid_league_id(ctx, league_id): 
+        return
+
+    teams = data.get_teams_in_league(league_id.upper())
+    if not teams:
+        await ctx.send(f"No teams found in league {league_id.upper()}.")
+        return
     
-    embed.set_footer(text="Requested by " + str(ctx.author.name))
-    embed.timestamp = ctx.message.created_at
+    embed = util.Embed(
+        title=f"{util.LEAGUE_ID_KEY[league_id.upper()]} League ({league_id.upper()})",
+        description=f"{len(teams)} team(s) found in this league."
+    )
 
-    await ctx.send(embed=embed)
+    embed.add_field(
+        name="Teams:", 
+        value="\n".join([f"**{team.number}** - {team.name}" for team in teams]), 
+        inline=False
+    )
 
-@bot.hybrid_command(name="sync", description="Sync slash commands", hidden=True)
+    await embed.send(ctx)
+
+
+@bot.hybrid_command(name="sync", description="Force data sync", hidden=True)
+@commands.is_owner()
+async def force_sync(ctx: commands.Context):
+    try:
+        message = await ctx.send("Fetching data...")
+        data.load_cache(force_sync=True)
+        await message.edit(content="Data sync complete!")
+    except Exception as e:
+        await ctx.send(f"Data sync failed: {e}")
+
+
+@bot.hybrid_command(name="sync_commands", description="Sync slash commands", hidden=True)
 @commands.is_owner()
 async def sync(ctx: commands.Context):
     try:
@@ -87,8 +205,11 @@ async def sync(ctx: commands.Context):
     except Exception as e:
         await ctx.send(f"Failed to sync commands: {e}")
 
+
 if __name__ == "__main__":
     load_dotenv(".env") # Load environment variables from .env file
-    api.USERNAME = os.getenv('FTC_API_USERNAME')
-    api.TOKEN = os.getenv('FTC_API_TOKEN')
+
+    api.init()
+    data.load_cache(force_sync=False)
+
     bot.run(os.getenv("BOT_TOKEN"))
