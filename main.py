@@ -1,8 +1,6 @@
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-import pytimeparse
-import datetime
 import os
 
 import api
