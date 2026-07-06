@@ -216,6 +216,26 @@ async def team(ctx: commands.Context, team_number: str):
     embed.add_field(name="FTCScout:", value=f"https://ftcscout.com/team/{team.number}")
     await embed.send(ctx)
 
+@bot.hybrid_command(name="leagues", description="Shows the leagues and their IDs")
+async def leagues(ctx: commands.Context):
+    '''
+    Show the leagues and their IDs. This is useful for finding the league ID to use with the `!league` command.
+    '''
+    embed = util.Embed(
+        title="Leagues",
+        description="See leagues and their IDs below.",
+        color=discord.Color.blue()
+    )
+    embed.add_field(
+        name="League List",
+        value="\n".join([f"**{key}** - {value}" for key, value in util.LEAGUE_ID_KEY.items()]),
+        inline=False
+    )
+    embed.add_field(
+        name="Specific Leagues",
+        value="Use `!league <league_id>` to see the teams in a specific league.",
+    )
+    await embed.send(ctx)
 
 @bot.hybrid_command(name="league", description="Shows the teams in a league")
 async def league(ctx: commands.Context, league_id: str):
