@@ -14,15 +14,17 @@ LEAGUE_ID_KEY = {
     "MW": "Marietta-Wheeler"
 }
 
-async def is_valid_team_number(ctx: commands.Context, team_number: str) -> bool:
+async def is_valid_team_number(ctx: commands.Context, team_number: str, verbose: bool = True) -> bool:
     if not team_number.isdigit() or len(team_number) > 5:
-        await ctx.send("Invalid team number.")
+        if verbose:
+            await ctx.send("Invalid team number.")
         return False
     return True
 
-async def is_valid_league_id(ctx: commands.Context, league_id: str) -> bool:
+async def is_valid_league_id(ctx: commands.Context, league_id: str, verbose: bool = True) -> bool:
     if league_id.upper() not in LEAGUE_ID_KEY:
-        embed = Embed(
+        if verbose:
+            embed = Embed(
             title="Invalid league ID",
             description="See valid league IDs below",
             color=discord.Color.red()
@@ -37,12 +39,20 @@ async def is_valid_league_id(ctx: commands.Context, league_id: str) -> bool:
         return False
     return True
 
-async def get_role(ctx: commands.Context, role_name: str, verbose: bool = True) -> discord.Role:
+async def get_role(ctx: commands.Context, role_name: str, verbose: bool = True) -> discord.Role | None:
     role: discord.Role = discord.utils.get(ctx.guild.roles, name=role_name)
     if not role and verbose:
         await ctx.send(f"The {role_name} role doesn't exist!")
         return None
     return role
+
+async def create_role(ctx: commands.Context, role_name: str, color: discord.Color = DEFAULT_ROLE_COLOR) -> discord.Role:
+    try:
+        role: discord.Role = await ctx.guild.create_role(name=role_name, color=color)
+        return role
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to create roles.")
+        return None
 
 def check_user_has_role(ctx: commands.Context, role: discord.Role) -> bool:
     return role in ctx.author.roles

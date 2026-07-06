@@ -9,9 +9,9 @@ import util
 cache: util.Cache = util.Cache({})
 
 # region Data handlers
-async def get_team(ctx: commands.Context, team_number: str) -> util.Team | None:
+async def get_team(ctx: commands.Context, team_number: str, verbose: bool = True) -> util.Team | None:
     '''Returns the team info for the given team number from the cache. Returns None if not found.'''
-    if not await util.is_valid_team_number(ctx, team_number):
+    if not await util.is_valid_team_number(ctx, team_number, verbose=verbose):
         return None
     
     for team in cache.teams:

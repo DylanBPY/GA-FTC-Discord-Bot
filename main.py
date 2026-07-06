@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+import pytimeparse
+import datetime
 import os
 
 import api
@@ -33,14 +35,33 @@ async def join(ctx: commands.Context, team_number: str):
     Args:
         team_number (str): The number of the team to join as a string.
     '''
-    team_info: util.Team = await data.get_team(ctx, team_number)
+    team_info: util.Team = await data.get_team(ctx, team_number, verbose=False)
     if not team_info:
         await ctx.send(f"Team {team_number} not found.")
         return
     
-    # TODO: Create role if it doesn't exist
-    role:discord.Role = await util.get_role(ctx, team_number)
-    if not role: return
+    role: discord.Role = await util.get_role(ctx, team_number, verbose=False)
+    if not role:
+        role = await util.create_role(ctx, team_number)
+        if not role:
+            return
+
+        # Sort roles by position lowest-to-highest to find the bottom one first
+        lowest_numeric_role = None
+        for r in sorted(ctx.guild.roles, key=lambda x: x.position):
+            if r.name.isdigit() and r.name != str(team_number):
+                lowest_numeric_role = r
+                break
+
+        if lowest_numeric_role is not None:
+            print(f"Moving role {role.name} to position below {lowest_numeric_role.name}")
+            await role.edit(position=lowest_numeric_role.position - 1)
+
+        if role:
+            await ctx.send(f"Created role for team {team_number}, use `!set_color {team_number} #ffffff` to change the role color with a custom hex code.")
+        else:
+            await ctx.send(f"Failed to create role for team {team_number}.")
+            return
 
     if util.check_user_has_role(ctx, role):
         await ctx.send(f"You are already on team {team_number}!")
@@ -61,7 +82,7 @@ async def leave(ctx: commands.Context, team_number: str):
     Args:
         team_number (str): The number of the team to leave as a string.
     '''
-    team_info: util.Team = await data.get_team(ctx, team_number)
+    team_info: util.Team = await data.get_team(ctx, team_number, verbose=False)
     if not team_info:
         await ctx.send(f"Team {team_number} not found.")
         return
@@ -79,7 +100,42 @@ async def leave(ctx: commands.Context, team_number: str):
         await util.remove_role_from_user(ctx, league_role, verbose=False)
     await ctx.send(f"You have been removed from team {team_number} and the {util.LEAGUE_ID_KEY.get(team_info.league)} league!")
 
+    if not role.members:
+        try:
+            await role.delete()
+            await ctx.send(f"Role for team {team_number} has been deleted as it has no members.")
+        except discord.Forbidden:
+            await ctx.send(f"Role for team {team_number} has no members but I don't have permission to delete it.")
+
     return
+
+@bot.hybrid_command(name="set_color", description="Set the color of a team role")
+async def set_color(ctx: commands.Context, team_number: str, color_hex: str):
+    '''
+    Set the color of a team role. You must be on the team to change its color.
+
+    Args:
+        team_number (str): The number of the team to change the color of as a string.
+        color_hex (str): The hex code of the color to set the role to, e.g. "#ff0000".
+    '''
+    role: discord.Role = await util.get_role(ctx, team_number)
+    if not role: return
+
+    if not util.check_user_has_role(ctx, role) and not ctx.author.guild_permissions.administrator:
+        await ctx.send(f"You aren't on team {team_number}!")
+        return
+
+    try:
+        color = discord.Color(int(color_hex.lstrip("#"), 16))
+    except ValueError:
+        await ctx.send(f"{color_hex} is not a valid hex code.")
+        return
+
+    try:
+        await role.edit(color=color)
+        await ctx.send(f"Role for team {team_number} has been updated to {color_hex}.")
+    except discord.Forbidden:
+        await ctx.send("I don't have permission to change the role color.")
 
 
 @bot.hybrid_command(name="members", description="List members of a team")
@@ -183,6 +239,38 @@ async def league(ctx: commands.Context, league_id: str):
     )
 
     await embed.send(ctx)
+
+
+@bot.hybrid_command(name="graduate", description="Mark yourself as an alumni")
+async def graduate(ctx: commands.Context):
+    '''
+    Mark yourself as an alumni. This will add the "Alumni" role to your account.
+    '''
+    await util.add_role_to_user(ctx, await util.get_role(ctx, "Alumni"), verbose=False)
+    await ctx.send("You are now an alumni! You can remove this role with `!ungraduate`.")
+
+
+@bot.hybrid_command(name="ungraduate", description="Remove yourself as an alumni")
+async def ungraduate(ctx: commands.Context):
+    '''
+    Remove yourself as an alumni. This will remove the "Alumni" role from your account.
+    '''
+    await util.remove_role_from_user(ctx, await util.get_role(ctx, "Alumni"), verbose=False)
+    await ctx.send("You are no longer an alumni! You can add this role back with `!graduate`.")
+
+
+@bot.hybrid_command(name="im_hungry", description="Get the hungry role for food notifications")
+async def im_hungry(ctx: commands.Context):
+    '''Get the hungry role.'''
+    await util.add_role_to_user(ctx, await util.get_role(ctx, "Hungry"), verbose=False)
+    await ctx.send("You are now hungry! You can remove this role with `!im_not_hungry`.")
+
+
+@bot.hybrid_command(name="im_not_hungry", description="Remove the hungry role for food notifications")
+async def unhungry(ctx: commands.Context):
+    '''Remove the hungry role.'''
+    await util.remove_role_from_user(ctx, await util.get_role(ctx, "Hungry"), verbose=False)
+    await ctx.send("You are no longer hungry! You can add this role back with `!im_hungry`.")
 
 
 @bot.hybrid_command(name="sync", description="Force data sync", hidden=True)
