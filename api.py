@@ -1,11 +1,12 @@
 import os
 import requests
 
+import util
+
 # Loaded from .env
 USERNAME = ""
 TOKEN = ""
 
-SEASON = "2025"
 ROOT = "https://ftc-api.firstinspires.org/v2.0/"
     
 def init():
@@ -15,7 +16,7 @@ def init():
 
 def get_teams() -> dict:
     response = requests.get(
-        url=ROOT + SEASON + "/teams",
+        url=ROOT + util.SEASON + "/teams",
         params={"state": "GA"},
         auth=(USERNAME, TOKEN)
     )
@@ -33,7 +34,7 @@ def get_teams() -> dict:
     
 def get_league_teams(league_id: str) -> list[int]:
     response = requests.get(
-        url=ROOT + SEASON + "/leagues/members/USGA/" + league_id,
+        url=ROOT + util.SEASON + "/leagues/members/USGA/" + league_id,
         auth=(USERNAME, TOKEN)
     )
 

@@ -13,6 +13,7 @@ LEAGUE_ID_KEY = {
     "MAC": "Macon-FPDS",
     "MW": "Marietta-Wheeler"
 }
+SEASON = "2025"
 
 async def is_valid_team_number(ctx: commands.Context, team_number: str, verbose: bool = True) -> bool:
     if not team_number.isdigit() or len(team_number) > 5:

@@ -19,6 +19,13 @@ async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
 
+@bot.event
+async def on_member_join(member: discord.Member):
+    channel = member.guild.system_channel
+    if channel is not None:
+        await channel.send(f"Welcome to the server, {member.mention}, run `!join <team_number>` in #bot-commands to join your team and league")
+
+
 @bot.hybrid_command(name="ping", description="Check the bot's latency")
 async def ping(ctx: commands.Context):
     '''Check the bot's latency and respond with "Pong!" and the latency in milliseconds.'''
@@ -205,7 +212,8 @@ async def team(ctx: commands.Context, team_number: str):
     embed.add_field(name="Rookie Year", value=team.rookie_year)
     embed.add_field(name="Sponsors", value=team.sponsors)
     embed.add_field(name="Members", value=f"Use `!members {team.number}` to see a list of team members.")
-
+    embed.add_field(name="Event Web:", value=f"https://ftc-events.firstinspires.org/{util.SEASON}/team/{team.number}")
+    embed.add_field(name="FTCScout:", value=f"https://ftcscout.com/team/{team.number}")
     await embed.send(ctx)
 
 
@@ -233,8 +241,9 @@ async def league(ctx: commands.Context, league_id: str):
     embed.add_field(
         name="Teams:", 
         value="\n".join([f"**{team.number}** - {team.name}" for team in teams]), 
-        inline=False
     )
+
+    embed.add_field("Event Web:", value=f"https://ftc-events.firstinspires.org/{util.SEASON}/region/USGA/league/{league_id.upper()}")
 
     await embed.send(ctx)
 
@@ -270,6 +279,53 @@ async def unhungry(ctx: commands.Context):
     await util.remove_role_from_user(ctx, await util.get_role(ctx, "Hungry"), verbose=False)
     await ctx.send("You are no longer hungry! You can add this role back with `!im_hungry`.")
 
+@bot.hybrid_command(name="sync_leagues", description="Add people with existing team roles to their league roles", hidden=True)
+@commands.is_owner()
+async def sync_leagues(ctx: commands.Context):
+    '''
+    Add people with existing team roles to their league roles. This is useful if the bot was added to a server
+    that already has team roles and members.
+    '''
+    message: discord.Message = await ctx.send("Syncing leagues...")
+    guild: discord.Guild = ctx.guild
+    count = 0
+    for role in guild.roles:
+        if role.name.isdigit():
+            team_info: util.Team = await data.get_team(ctx, role.name, verbose=False)
+            if not team_info:
+                continue
+            league_role: discord.Role = await util.get_role(ctx, util.LEAGUE_ID_KEY.get(team_info.league), verbose=False)
+            if not league_role:
+                continue
+            for member in role.members:
+                if league_role not in member.roles:
+                    try:
+                        await member.add_roles(league_role)
+                        print(f"Added {member.display_name} to {league_role.name} for being on team {role.name}.")
+                        count += 1
+                    except discord.Forbidden:
+                        print(f"Failed to add {member.display_name} to {league_role.name} for being on team {role.name}.")
+    await message.edit(content=f"Synced leagues successfully! Added {count} member(s) to their league roles.")
+
+@bot.hybrid_command(name="add_role", description="Add a role to a user", hidden=True)
+@commands.is_owner()
+async def add_role(ctx: commands.Context, user: discord.Member, role_name: str):
+    '''
+    Add a role to a user. This is useful for adding roles to users who are not on a team.
+
+    Args:
+        user (discord.Member): The user to add the role to.
+        role_name (str): The name of the role to add.
+    '''
+    role: discord.Role = await util.get_role(ctx, role_name, verbose=False)
+    if not role:
+        await ctx.send(f"Role {role_name} not found.")
+        return
+    try:
+        await user.add_roles(role)
+        await ctx.send(f"Added {role.name} to {user.display_name}.")
+    except discord.Forbidden:
+        await ctx.send(f"Failed to add {role.name} to {user.display_name}. I don't have permission to do that.")
 
 @bot.hybrid_command(name="sync", description="Force data sync", hidden=True)
 @commands.is_owner()
