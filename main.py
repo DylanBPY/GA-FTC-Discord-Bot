@@ -271,7 +271,7 @@ async def league(ctx: commands.Context, league_id: str):
     await embed.send(ctx)
 
 @bot.hybrid_command(name="season_data", description="seasons the data")
-async def league(ctx: commands.Context, year: str):
+async def season_data(ctx: commands.Context, year: str):
     '''
     seasons the data
     '''
@@ -293,7 +293,7 @@ async def league(ctx: commands.Context, year: str):
     await embed.send(ctx)
 
 @bot.hybrid_command(name="event", description="Gets event info")
-async def league(ctx: commands.Context, event_code: str):
+async def event(ctx: commands.Context, event_code: str):
     '''
     Gets event info
     '''
@@ -321,7 +321,7 @@ async def league(ctx: commands.Context, event_code: str):
     await embed.send(ctx)
 
 @bot.hybrid_command(name="events", description="Lists event codes")
-async def league(ctx: commands.Context):
+async def events(ctx: commands.Context):
     '''
     Lists event codes
     '''
@@ -357,7 +357,7 @@ async def league(ctx: commands.Context):
     await embed.send(ctx)
 
 @bot.hybrid_command(name="rankings", description="Gets rankings of an event")
-async def league(ctx: commands.Context, event_code: str, page_num = 1):
+async def rankings(ctx: commands.Context, event_code: str, page_num = 1):
     '''
     Gets rankings of an event.
     RS = Ranking Score
