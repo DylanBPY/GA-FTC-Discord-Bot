@@ -1,5 +1,8 @@
 import math
 
+from sympy import *
+from sympy.vector import CoordSys3D
+
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -9,7 +12,6 @@ import re
 import api
 import data
 import util
-
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -28,12 +30,12 @@ async def on_member_join(member: discord.Member):
     if channel is not None:
         await channel.send(f"Welcome to the server, {member.mention}, run `!join <team_number>` in #bot-commands to join your team and league")
 
-
 @bot.hybrid_command(name="ping", description="Check the bot's latency")
 async def ping(ctx: commands.Context):
     '''Check the bot's latency and respond with "Pong!" and the latency in milliseconds.'''
     await ctx.send(f"Pong! (in {round(bot.latency * 1000)}ms)")
 
+# region FTC Commands
 
 @bot.hybrid_command(name="join", description="Add yourself to a team")
 async def join(ctx: commands.Context, team_number: str):
@@ -80,7 +82,6 @@ async def join(ctx: commands.Context, team_number: str):
     await util.add_role_to_user(ctx, league_role, verbose=False)
     await ctx.send(f"You have been added to team {team_number} and the {util.LEAGUE_ID_KEY.get(team_info.league)} league!")
     return
-
 
 @bot.hybrid_command(name="leave", description="Remove yourself from a team")
 async def leave(ctx: commands.Context, team_number: str):
@@ -145,7 +146,6 @@ async def set_color(ctx: commands.Context, team_number: str, color_hex: str):
     except discord.Forbidden:
         await ctx.send("I don't have permission to change the role color.")
 
-
 @bot.hybrid_command(name="members", description="List members of a team")
 async def members(ctx: commands.Context, team_number: str):
     '''
@@ -186,7 +186,6 @@ async def members(ctx: commands.Context, team_number: str):
         embed.add_field(name="Alumni:", value="\n".join(alumni_members))
 
     await embed.send(ctx)
-
 
 @bot.hybrid_command(name="team", description="Show information about a team")
 async def team(ctx: commands.Context, team_number: str):
@@ -359,7 +358,7 @@ async def events(ctx: commands.Context):
 @bot.hybrid_command(name="rankings", description="Gets rankings of an event")
 async def rankings(ctx: commands.Context, event_code: str, page_num = 1):
     '''
-    Gets rankings of an event.
+    Gets rankings of an event. (League meets have the same stats)
     RS = Ranking Score
     PTS = Average Points (without penalties)
     QA = Qualification Average
@@ -368,6 +367,8 @@ async def rankings(ctx: commands.Context, event_code: str, page_num = 1):
     MC = Matches Counted
     '''
     event_code = event_code.upper()
+    if event_code[:4] != "USGA":
+        event_code = "USGA" + event_code
     rankings: util.Rankings = await data.get_rankings(ctx, event_code, verbose=False) # Can be null
 
     if not rankings:
@@ -400,6 +401,10 @@ async def rankings(ctx: commands.Context, event_code: str, page_num = 1):
     embed.add_field(name=f"Event Rankings ({page_num}/{max_page})", value=rankings_str)
     await embed.send(ctx)
 
+# endregion
+
+# region Self Roles
+
 @bot.hybrid_command(name="graduate", description="Mark yourself as an alumni")
 async def graduate(ctx: commands.Context):
     '''
@@ -407,7 +412,6 @@ async def graduate(ctx: commands.Context):
     '''
     await util.add_role_to_user(ctx, await util.get_role(ctx, "Alumni"), verbose=False)
     await ctx.send("You are now an alumni! You can remove this role with `!ungraduate`.")
-
 
 @bot.hybrid_command(name="ungraduate", description="Remove yourself as an alumni")
 async def ungraduate(ctx: commands.Context):
@@ -417,19 +421,103 @@ async def ungraduate(ctx: commands.Context):
     await util.remove_role_from_user(ctx, await util.get_role(ctx, "Alumni"), verbose=False)
     await ctx.send("You are no longer an alumni! You can add this role back with `!graduate`.")
 
-
 @bot.hybrid_command(name="im_hungry", description="Get the hungry role for food notifications")
 async def im_hungry(ctx: commands.Context):
     '''Get the hungry role.'''
     await util.add_role_to_user(ctx, await util.get_role(ctx, "Hungry"), verbose=False)
     await ctx.send("You are now hungry! You can remove this role with `!im_not_hungry`.")
 
-
 @bot.hybrid_command(name="im_not_hungry", description="Remove the hungry role for food notifications")
 async def unhungry(ctx: commands.Context):
     '''Remove the hungry role.'''
     await util.remove_role_from_user(ctx, await util.get_role(ctx, "Hungry"), verbose=False)
     await ctx.send("You are no longer hungry! You can add this role back with `!im_hungry`.")
+
+# endregion
+
+# region Calculator Stuff
+
+calcVars: dict = {}
+
+@bot.hybrid_command(name="calc", description="Sympy computer algebra system / calculator")
+async def calc(ctx: commands.Context, *, input: str):
+    '''Simplifies expressions. Note that ^ is xor and ** is pow.'''
+    try:
+        if re.match('eval|exec', input):
+            await ctx.send("What are you doing.")
+            return
+        out: str = str(parse_expr(input.format(**calcVars)))
+    except Exception as e:
+        print("ERROR: ", type(e), e)
+        await ctx.send("Couldn't evaluate.")
+        return
+    await ctx.send(f"```\n{out}\n```")
+
+@bot.hybrid_command(name="calca", description="Assigns values to the calculator memory")
+async def calca(ctx: commands.Context, var: str, *, input: str):
+    '''Puts values/expressions to the calculator memory, retrievable via "{identifier}. Note that ^ is xor and ** is pow."'''
+    try:
+        if re.match('eval|exec', input):
+            await ctx.send("What are you doing.")
+            return
+        out: str = str(parse_expr(input.format(**calcVars)))
+        calcVars[var] = out
+    except:
+        await ctx.send("Couldn't evaluate.")
+        return
+    await ctx.send(f"```\n{var} ← {out}\n```")
+
+@bot.hybrid_command(name="calcf", description="Evaluates expression numerically")
+async def calcf(ctx: commands.Context, *, input: str):
+    '''Evaluates the expression numerically. Note that ^ is xor and ** is pow.'''
+    try:
+        if re.match('eval|exec', input):
+            await ctx.send("What are you doing.")
+            return
+        out: str = str(parse_expr(input.format(**calcVars)).evalf())
+    except:
+        await ctx.send("Couldn't evaluate.")
+        return
+    await ctx.send(f"```\n{out}\n```")
+
+@bot.hybrid_command(name="calcm", description="Prints calculator memory")
+async def calcm(ctx: commands.Context):
+    '''Prints calculator memory'''
+    await ctx.send(f"```\n{calcVars}\n```")
+
+@bot.hybrid_command(name="calcmc", description="Clears calculator memory")
+async def calcmc(ctx: commands.Context):
+    '''Clears calculator memory'''
+    calcVars.clear()
+    await ctx.send("Calcalator memory cleared.")
+
+# endregion
+
+@bot.hybrid_command(name="echo", description="Repeats arguments")
+async def echo(ctx: commands.Context, *, text: str):
+    '''Echoes'''
+    await ctx.send(text)
+
+@bot.hybrid_command(name="kill", description="kill")
+async def kill(ctx: commands.Context, *, usr: str):
+    '''kill'''
+    text: str = usr.lower()
+    if text == "tim":
+        mod = discord.utils.find(lambda r: r.name == 'Mod', ctx.message.guild.roles)
+        if mod in ctx.author.roles:
+            await ctx.message.add_reaction("💔")
+            await ctx.send("WHAT DID I DOOO")
+            quit()
+        else:
+            await ctx.message.add_reaction("🥀")
+            await ctx.send("what are you trying to do sonion")
+            return
+    if "akube" in text or "ethan" in text or "840396811596464130" in text:
+        await ctx.send("coulndt kill them mb :<")
+    else:
+        await ctx.send(f"killed {usr} [:3](https://cdn.discordapp.com/attachments/1368475349934936195/1461135751092768831/attachment.gif?ex=6a4e3075&is=6a4cdef5&hm=800297222d8511fe7191386e3613c7f383c342959fe368ec4da8bf5f935d0c1e)")
+
+# region Mod Commands
 
 @bot.hybrid_command(name="sync_leagues", description="Add people with existing team roles to their league roles", hidden=True)
 @commands.has_role("Mod")
@@ -458,8 +546,6 @@ async def sync_leagues(ctx: commands.Context):
                     except discord.Forbidden:
                         print(f"Failed to add {member.display_name} to {league_role.name} for being on team {role.name}.")
     await message.edit(content=f"Synced leagues successfully! Added {count} member(s) to their league roles.")
-
-# region Mod Commands
 
 @bot.hybrid_command(name="add_role", description="Add a role to a user", hidden=True)
 @commands.has_role("Mod")
@@ -490,7 +576,6 @@ async def force_sync(ctx: commands.Context):
         await message.edit(content="Data sync complete!")
     except Exception as e:
         await ctx.send(f"Data sync failed: {e}")
-
 
 @bot.hybrid_command(name="sync_commands", description="Sync slash commands", hidden=True)
 @commands.has_role("Mod")
