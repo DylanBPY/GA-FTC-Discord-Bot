@@ -1,5 +1,6 @@
 import math
 import random
+import numbers
 
 import discord
 from discord.ext import commands
@@ -19,11 +20,19 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+async def feed_and_say(input, message: discord.Message):
+    markov.feed(input)
+    await message.reply(markov.gen_response(), mention_author=False)
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
+@bot.listen('on_message')
+async def message_listener(message: discord.Message):
+    # message.
+    if message.reference and message.reference.resolved and bot.application_id == message.reference.resolved.author.id:
+        await feed_and_say(message.content, message)
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -445,26 +454,78 @@ def format_input(input):
     else:
         return input
 
-def format_output(output):
-    if abs(output) <= 0.000000000000001: return "0"
+def format_output(output, precision=10, matrix_precision=2, left_indent=0, compact=False):
+    # tuple case
+    if isinstance(output, tuple):
+        out_string = ""
+        for i, indiv_output in enumerate(output):
+            out_string += format_output(indiv_output, precision=precision, matrix_precision=matrix_precision, left_indent=(left_indent if i == 0 else 0))
+            if i != len(output) - 1:
+                out_string += ", "
+                if not isinstance(indiv_output, numbers.Number):
+                    out_string += "\n"
+
+        return out_string
+    # matrix case
+    if isinstance(output, calculator.Matrix):
+        rows = [[format_output(output.get(i, j), precision=matrix_precision, compact=True) for j in range(1, output.n + 1)] for i in range(1, output.m + 1)]
+        max_lens = [max([len(rows[j][i]) for j in range(len(rows))]) for i in range(len(rows[0]))]
+        row_strings = []
+        # ⎡a b c⎤
+        # ⎢d e f⎥
+        # ⎣g h i⎦
+        for i, row in enumerate(rows):
+            row_string = (" " * left_indent if i != 0 else "") + ("[" if len(rows) == 1 else "⎡" if i == 0 else "⎢" if i != len(rows) - 1 else "⎣")
+            for j, entry in enumerate(row):
+                max_len = max_lens[j]
+                entry_len = len(entry)
+                half_net_padding = (max_len - entry_len) / 2
+                left_padding = " " * math.ceil(half_net_padding)
+                right_padding = " " * math.floor(half_net_padding)
+                entry_string = left_padding + entry + right_padding
+                if j != len(row) - 1:
+                    entry_string += " "
+                row_string += entry_string
+            row_string += "]" if len(rows) == 1 else "⎤" if i == 0 else "⎥" if i != len(rows) - 1 else "⎦"
+            row_strings.append(row_string)
+        return "\n".join(row_strings)
+    # vector case
+    if isinstance(output, calculator.Vector): return format_output(calculator.Matrix(output), matrix_precision=matrix_precision, left_indent=left_indent)
+    # complex case
     if numpy.iscomplex(output):
-        if abs(output.real) <= 0.000000000000001:
-            if abs(output.imag) <= 0.000000000000001: return "0"
-            if output.imag == 1: return "i"
-            if output.imag == -1: return "-i"
-            return f"{format_output(output.imag)}i"
-        elif abs(output.imag) <= 0.000000000000001:
-            return format_output(output.real)
+        out_real = round(output.real, precision)
+        out_imag = round(output.imag, precision)
+        if abs(out_real) <= 0.000000000000001:
+            if abs(out_imag) <= 0.000000000000001: return "0"
+            if out_imag == 1: return "i"
+            if out_imag == -1: return "-i"
+            return f"{format_output(out_imag)}i"
+        elif abs(out_imag) <= 0.000000000000001:
+            return format_output(out_real)
         else:
-            return f"{format_output(output.real)} {"+" if output.imag >= 0 else "-"} {"" if abs(output.imag) == 1 else format_output(abs(output.imag))}i"
-    output = str(output)
+            return f"{format_output(out_real)}{"" if compact else " "}{"+" if out_imag >= 0 else "-"}{"" if compact else " "}{"" if abs(out_imag) == 1 else format_output(abs(out_imag))}i"
+    # real case
+    if round(abs(output), precision) <= 0.000000000000001: return "0"
+    output = str(round(output.real, precision))
     output = re.sub(r'e\+?(-?[0-9]+)', r'×10^(\1)', output)
     output = re.sub(r'-0([0-9])', r'-\1', output)
     if output[-2:] == '.0': output = output[:-2]
     return output
 
-@bot.hybrid_command(name="calc", description="Basic Calculator")
+@bot.hybrid_command(name="calc", description="""
+                    Basic calculator that supports:
+                    +, -, *, /, % (mod), ^, !, ln, exp, sqrt, cbrt, sign, sgn, abs, conj, hyp,
+                    eye, zeros, ones, det, trace, tr, T, transpose, & (cross product),
+                    literally every trig func + hyperbolic trig func,
+                    And constants e and pi.
+                    To define a (column) vector:
+                        <1, 2, 3>
+                    To define a matrix:
+                        Per row: [1, 2, 3; 4, 5, 6; 7, 8, 9]
+                        Per column: [<1, 2, 3>, <4, 5, 6>, <7, 8, 9>]
+                    """)
 async def calc(ctx: commands.Context, *, input: str):
+    '''Basic calculator.'''
     out = calculator.calculate(format_input(input), calc_vars)
     if out == calculator.syntax_error:
         await ctx.send("Syntax Error.")
@@ -474,8 +535,13 @@ async def calc(ctx: commands.Context, *, input: str):
         return
     await ctx.send(f"```\n{format_output(out)}\n```")
 
-@bot.hybrid_command(name="calca", description="Assigns Values to the Calculator Memory")
+@bot.hybrid_command(name="calca", description="""
+                    Assigns value to the calculator memory.
+                    Try !calca x 3
+                    and !calc 3x+2
+                    """)
 async def calca(ctx: commands.Context, var: str, *, input: str):
+    '''Assigns Values to the calculator memory'''
     out = calculator.calculate(format_input(input), calc_vars)
     if out == calculator.syntax_error:
         await ctx.send("Syntax Error.")
@@ -484,33 +550,49 @@ async def calca(ctx: commands.Context, var: str, *, input: str):
         await ctx.send("Math Error.")
         return
     calc_vars[var] = out
-    await ctx.send(f"```\n{var} ← {format_output(out)}\n```")
+    await ctx.send(f"```\n{var} ← {format_output(out, left_indent=(len(var) + 3))}\n```")
 
-@bot.hybrid_command(name="calcm", description="Sends Calculator Memory")
+@bot.hybrid_command(name="calcm", description="Sends the calculator memory")
 async def calcm(ctx: commands.Context):
+    '''Sends the calculator memory'''
     memory_string = ""
     if calc_vars == {}:
         await ctx.send("Nothing in memory.")
         return
     for variable, value in calc_vars.items():
-        memory_string += f"{variable}: {format_output(value)}\n"
+        memory_string += f"{variable}: {format_output(value, left_indent=(2 + len(variable)))}\n"
     if len(memory_string) >= 2000:
         await ctx.send("Too many variables to display! Clear it please")
         return
     await ctx.send(f"```\n{memory_string}```")
 
-@bot.hybrid_command(name="calcmc", description="Clears Calculator Memory")
+@bot.hybrid_command(name="calcmc", description="Clears the calculator memory")
 async def calcmc(ctx: commands.Context):
+    '''Clears the calculator memory'''
     calc_vars.clear()
     await ctx.send("Calculator Memory Cleared.")
 
 # endregion
 
 answers: list[str] = ["yes definitely", "no dont pls dont", "what does that even mean??? ask chatgpt or something", "timmy says yes", "say that again i couldn't hear", "YES", "NO", "hell yeah", "ah hell no", "no.", "67"]
+# answers: list[str] = ["yaaaaa"]
 @bot.hybrid_command(name="tim", description="Ask me a yes or no question")
 async def tim(ctx: commands.Context):
     '''Respond with a variant of yes or no.'''
     await ctx.send(answers[random.randrange(len(answers))])
+
+import markov
+@bot.hybrid_command(name="say", description="Ask me lit anything, !sayclear if i went rogue")
+async def say(ctx: commands.Context, *, input: str):
+    '''Responds with wtv, !sayclear if i went rogue'''
+    await feed_and_say(input, ctx.message)
+
+import markov
+@bot.hybrid_command(name="sayclear", description="Reset my memory")
+async def sayclear(ctx: commands.Context):
+    '''use if !say spits out some vile stuff'''
+    print(markov.words_data)
+    markov.clear_response()
 
 @bot.hybrid_command(name="echo", description="Repeats arguments")
 async def echo(ctx: commands.Context, *, text: str):
