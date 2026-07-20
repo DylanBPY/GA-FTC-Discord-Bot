@@ -8,8 +8,6 @@ from dotenv import load_dotenv
 import os
 import re
 
-import numpy
-
 import api
 import data
 import util
@@ -493,7 +491,7 @@ def format_output(output, precision=10, matrix_precision=2, left_indent=0, compa
     # vector case
     if isinstance(output, calculator.Vector): return format_output(calculator.Matrix(output), matrix_precision=matrix_precision, left_indent=left_indent)
     # complex case
-    if numpy.iscomplex(output):
+    if isinstance(output, complex):
         out_real = round(output.real, precision)
         out_imag = round(output.imag, precision)
         if abs(out_real) <= 0.000000000000001:

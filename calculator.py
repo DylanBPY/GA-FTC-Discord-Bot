@@ -22,28 +22,28 @@ def conj(num):
 
 def real(num):
     # pass
-    if isinstance(num, numbers.Complex):
+    if isinstance(num, complex):
         return num.real
     else: return num
 
 def imag(num):
     # pass
-    if isinstance(num, numbers.Complex):
+    if isinstance(num, complex):
         return num.imag
     else: return 0
 
 def floor(num):
-    if isinstance(num, numbers.Complex):
+    if isinstance(num, complex):
         return math.floor(num.real) + 1j * math.floor(num.imag)
     else: return math.floor(num)
 
 def ceil(num):
-    if isinstance(num, numbers.Complex):
+    if isinstance(num, complex):
         return math.ceil(num.real) + 1j * math.ceil(num.imag)
     else: return math.ceil(num)
 
 def calc_round(num):
-    if isinstance(num, numbers.Complex):
+    if isinstance(num, complex):
         return round(num.real) + 1j * round(num.imag)
     else: return round(num)
 
@@ -249,8 +249,8 @@ class Matrix:
     
     def transpose(self):
         transpose_vectors = []
-        for j in range(1, self.n + 1):
-            transpose_vectors.append(Vector(*[self.get(j, i) for i in range(1, self.m + 1)]))
+        for j in range(1, self.m + 1):
+            transpose_vectors.append(Vector(*[self.get(j, i) for i in range(1, self.n + 1)]))
         return Matrix(*transpose_vectors)
     
     def transpose_conj(self):
@@ -365,8 +365,6 @@ operators = {
     # basic funcs
     '!': {'type': post_operator, 'func': lambda a: factorial(a)},
     'ln': {'type': pre_operator, 'func': lambda a: cmath.log(a)},
-    'logb': {'type': pre_operator, 'func': lambda a: cmath.log2(a)},
-    'log': {'type': pre_operator, 'func': lambda a: cmath.log10(a)},
     'exp': {'type': pre_operator, 'func': lambda a: cmath.exp(a)},
     'sqrt': {'type': pre_operator, 'func': lambda a: cmath.sqrt(a)},
     'cbrt': {'type': pre_operator, 'func': lambda a: cmath.cbrt(a)},
