@@ -1,4 +1,6 @@
 import math
+import random
+import numbers
 
 import discord
 from discord.ext import commands
@@ -9,18 +11,26 @@ import re
 import api
 import data
 import util
-
+import calculator
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+async def feed_and_say(input, message: discord.Message):
+    markov.feed(input)
+    await message.reply(markov.gen_response(), mention_author=False)
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
+@bot.listen('on_message')
+async def message_listener(message: discord.Message):
+    # message.
+    if message.reference and message.reference.resolved and bot.application_id == message.reference.resolved.author.id:
+        await feed_and_say(message.content, message)
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -28,12 +38,12 @@ async def on_member_join(member: discord.Member):
     if channel is not None:
         await channel.send(f"Welcome to the server, {member.mention}, run `!join <team_number>` in #bot-commands to join your team and league")
 
-
 @bot.hybrid_command(name="ping", description="Check the bot's latency")
 async def ping(ctx: commands.Context):
     '''Check the bot's latency and respond with "Pong!" and the latency in milliseconds.'''
     await ctx.send(f"Pong! (in {round(bot.latency * 1000)}ms)")
 
+# region FTC Commands
 
 @bot.hybrid_command(name="join", description="Add yourself to a team")
 async def join(ctx: commands.Context, team_number: str):
@@ -80,7 +90,6 @@ async def join(ctx: commands.Context, team_number: str):
     await util.add_role_to_user(ctx, league_role, verbose=False)
     await ctx.send(f"You have been added to team {team_number} and the {util.LEAGUE_ID_KEY.get(team_info.league)} league!")
     return
-
 
 @bot.hybrid_command(name="leave", description="Remove yourself from a team")
 async def leave(ctx: commands.Context, team_number: str):
@@ -145,7 +154,6 @@ async def set_color(ctx: commands.Context, team_number: str, color_hex: str):
     except discord.Forbidden:
         await ctx.send("I don't have permission to change the role color.")
 
-
 @bot.hybrid_command(name="members", description="List members of a team")
 async def members(ctx: commands.Context, team_number: str):
     '''
@@ -186,7 +194,6 @@ async def members(ctx: commands.Context, team_number: str):
         embed.add_field(name="Alumni:", value="\n".join(alumni_members))
 
     await embed.send(ctx)
-
 
 @bot.hybrid_command(name="team", description="Show information about a team")
 async def team(ctx: commands.Context, team_number: str):
@@ -319,8 +326,8 @@ async def event(ctx: commands.Context, event_code: str):
     embed.add_field(name="Start Date", value=event.date_start)
     embed.add_field(name="End Date", value=event.date_end)
     await embed.send(ctx)
-
 @bot.hybrid_command(name="events", description="Lists event codes")
+
 async def events(ctx: commands.Context):
     '''
     Lists event codes
@@ -359,7 +366,7 @@ async def events(ctx: commands.Context):
 @bot.hybrid_command(name="rankings", description="Gets rankings of an event")
 async def rankings(ctx: commands.Context, event_code: str, page_num = 1):
     '''
-    Gets rankings of an event.
+    Gets rankings of an event. (League meets have the same stats)
     RS = Ranking Score
     PTS = Average Points (without penalties)
     QA = Qualification Average
@@ -368,6 +375,8 @@ async def rankings(ctx: commands.Context, event_code: str, page_num = 1):
     MC = Matches Counted
     '''
     event_code = event_code.upper()
+    if event_code[:4] != "USGA":
+        event_code = "USGA" + event_code
     rankings: util.Rankings = await data.get_rankings(ctx, event_code, verbose=False) # Can be null
 
     if not rankings:
@@ -400,6 +409,10 @@ async def rankings(ctx: commands.Context, event_code: str, page_num = 1):
     embed.add_field(name=f"Event Rankings ({page_num}/{max_page})", value=rankings_str)
     await embed.send(ctx)
 
+# endregion
+
+# region Self Roles
+
 @bot.hybrid_command(name="graduate", description="Mark yourself as an alumni")
 async def graduate(ctx: commands.Context):
     '''
@@ -407,7 +420,6 @@ async def graduate(ctx: commands.Context):
     '''
     await util.add_role_to_user(ctx, await util.get_role(ctx, "Alumni"), verbose=False)
     await ctx.send("You are now an alumni! You can remove this role with `!ungraduate`.")
-
 
 @bot.hybrid_command(name="ungraduate", description="Remove yourself as an alumni")
 async def ungraduate(ctx: commands.Context):
@@ -417,19 +429,251 @@ async def ungraduate(ctx: commands.Context):
     await util.remove_role_from_user(ctx, await util.get_role(ctx, "Alumni"), verbose=False)
     await ctx.send("You are no longer an alumni! You can add this role back with `!graduate`.")
 
-
 @bot.hybrid_command(name="im_hungry", description="Get the hungry role for food notifications")
 async def im_hungry(ctx: commands.Context):
     '''Get the hungry role.'''
     await util.add_role_to_user(ctx, await util.get_role(ctx, "Hungry"), verbose=False)
     await ctx.send("You are now hungry! You can remove this role with `!im_not_hungry`.")
 
-
 @bot.hybrid_command(name="im_not_hungry", description="Remove the hungry role for food notifications")
 async def unhungry(ctx: commands.Context):
     '''Remove the hungry role.'''
     await util.remove_role_from_user(ctx, await util.get_role(ctx, "Hungry"), verbose=False)
     await ctx.send("You are no longer hungry! You can add this role back with `!im_hungry`.")
+
+# endregion
+
+# region Calculator Stuff
+
+calc_vars: dict = {}
+calc_funcs: dict = {}
+def format_input(input):
+    if input[0] == '`' and input[-1] == '`':
+        return input[1:-1]
+    else:
+        return input
+
+def format_output(output, precision=10, matrix_precision=2, left_indent=0, compact=False):
+    # tuple case
+    if isinstance(output, tuple):
+        out_string = ""
+        for i, indiv_output in enumerate(output):
+            out_string += format_output(indiv_output, precision=precision, matrix_precision=matrix_precision, left_indent=(left_indent if i == 0 else 0))
+            if i != len(output) - 1:
+                out_string += ", "
+                if not isinstance(indiv_output, numbers.Number):
+                    out_string += "\n"
+
+        return out_string
+    # matrix case
+    if isinstance(output, calculator.Matrix):
+        rows = [[format_output(output.get(i, j), precision=matrix_precision, compact=True) for j in range(1, output.n + 1)] for i in range(1, output.m + 1)]
+        max_lens = [max([len(rows[j][i]) for j in range(len(rows))]) for i in range(len(rows[0]))]
+        row_strings = []
+        # ⎡a b c⎤
+        # ⎢d e f⎥
+        # ⎣g h i⎦
+        for i, row in enumerate(rows):
+            row_string = (" " * left_indent if i != 0 else "") + ("[" if len(rows) == 1 else "⎡" if i == 0 else "⎢" if i != len(rows) - 1 else "⎣")
+            for j, entry in enumerate(row):
+                max_len = max_lens[j]
+                entry_len = len(entry)
+                half_net_padding = (max_len - entry_len) / 2
+                left_padding = " " * math.ceil(half_net_padding)
+                right_padding = " " * math.floor(half_net_padding)
+                entry_string = left_padding + entry + right_padding
+                if j != len(row) - 1:
+                    entry_string += " "
+                row_string += entry_string
+            row_string += "]" if len(rows) == 1 else "⎤" if i == 0 else "⎥" if i != len(rows) - 1 else "⎦"
+            row_strings.append(row_string)
+        return "\n".join(row_strings)
+    # vector case
+    if isinstance(output, calculator.Vector): return format_output(calculator.Matrix(output), matrix_precision=matrix_precision, left_indent=left_indent)
+    # complex case
+    if isinstance(output, complex):
+        out_real = round(output.real, precision)
+        out_imag = round(output.imag, precision)
+        if abs(out_real) <= 0.000000000000001:
+            if abs(out_imag) <= 0.000000000000001: return "0"
+            if out_imag == 1: return "i"
+            if out_imag == -1: return "-i"
+            return f"{format_output(out_imag)}i"
+        elif abs(out_imag) <= 0.000000000000001:
+            return format_output(out_real)
+        else:
+            return f"{format_output(out_real)}{"" if compact else " "}{"+" if out_imag >= 0 else "-"}{"" if compact else " "}{"" if abs(out_imag) == 1 else format_output(abs(out_imag))}i"
+    # real case
+    if round(abs(output), precision) <= 0.000000000000001: return "0"
+    output = str(round(output.real, precision))
+    output = re.sub(r'e\+?(-?[0-9]+)', r'×10^(\1)', output)
+    output = re.sub(r'-0([0-9])', r'-\1', output)
+    if output[-2:] == '.0': output = output[:-2]
+    return output
+
+@bot.hybrid_command(name="calc", description="""
+                    Basic calculator that supports:
+                    +, -, *, /, % (mod), ^, !, ln, exp, sqrt, cbrt, sign, sgn, abs, arg, conj, hyp,
+                    eye, zeros, ones, det, trace, tr, rref, T, transpose, & (cross product), norm,
+                    literally every trig func + hyperbolic trig func,
+                    And constants e and pi and i=sqrt(-1).
+                    To define a column vector:
+                        <1, 2, 3>
+                    To define a row vector (if u fw ts):
+                        [1, 2, 3]
+                    To define a matrix:
+                        Per row: [1, 2, 3; 4, 5, 6; 7, 8, 9]
+                        Per column: [<1, 2, 3>, <4, 5, 6>, <7, 8, 9>]
+                    """)
+async def calc(ctx: commands.Context, *, input: str):
+    '''Basic calculator.'''
+    out = calculator.calculate(format_input(input), vars=calc_vars, funcs=calc_funcs)
+    if out == calculator.syntax_error:
+        await ctx.send("Syntax Error.")
+        return
+    if out == calculator.math_error:
+        await ctx.send("Math Error.")
+        return
+    await ctx.send(f"```\n{format_output(out)}\n```")
+
+@bot.hybrid_command(name="calcf", description="""
+                    Assigns functions to the calculator memory. Check !help calc for more info about the calculator
+                    Try !calca f(x, y) x + y
+                    and !calc f(2, 3)
+                    """)
+async def calcf(ctx: commands.Context, *, input: str):
+    '''Assigns functions to the calculator memory'''
+    func_names = re.findall(r'^.*?(?=\()', input)
+    if len(func_names) == 0:
+        await ctx.send("Couldn't find function name.")
+        return
+    args_match = re.findall(r'(?<=\().*?(?=\))', input)
+    if len(args_match) == 0 or args_match[0] == '':
+        await ctx.send("Couldn't find function arguments.")
+        return
+    func_expressions = re.findall(r'(?<=\) ).*', input)
+    if len(func_expressions) == 0:
+        await ctx.send("Couldn't find function expression.")
+        return
+    func_name = func_names[0]
+    func_args = re.sub(r'\s', '', args_match[0]).split(',')
+    func_expression = format_input(func_expressions[0])
+    parsed_func = calculator.def_func(func_expression, func_args, vars=calc_vars, funcs=calc_funcs)
+    if parsed_func == calculator.syntax_error:
+        await ctx.send("Syntax Error.")
+        return
+    if parsed_func == calculator.math_error:
+        await ctx.send("Math Error.")
+        return
+    func_str = f"{func_name}({", ".join(func_args)})"
+    calc_funcs[func_name] = parsed_func
+    calc_funcs[func_name]['defstr'] = func_str
+    calc_funcs[func_name]['exprstr'] = func_expression
+    await ctx.send(f"```\n{func_str} ← {func_expression}\n```")
+
+@bot.hybrid_command(name="calca", description="""
+                    Assigns a value to the calculator memory. Check !help calc for more info about the calculator
+                    Try !calca x 3
+                    and !calc 3x + 2
+                    """)
+async def calca(ctx: commands.Context, var: str, *, input: str):
+    '''Assigns values to the calculator memory'''
+    out = calculator.calculate(format_input(input), vars=calc_vars, funcs=calc_funcs)
+    if out == calculator.syntax_error:
+        await ctx.send("Syntax Error.")
+        return
+    if out == calculator.math_error:
+        await ctx.send("Math Error.")
+        return
+    calc_vars[var] = out
+    await ctx.send(f"```\n{var} ← {format_output(out, left_indent=(len(var) + 3))}\n```")
+
+@bot.hybrid_command(name="calcm", description="Sends the calculator memory for variables")
+async def calcm(ctx: commands.Context):
+    '''Sends the calculator memory for variables'''
+    memory_string = ""
+    if calc_vars == {}:
+        await ctx.send("Nothing in variable memory.")
+        return
+    for variable, value in calc_vars.items():
+        memory_string += f"{variable}: {format_output(value, left_indent=(2 + len(variable)))}\n"
+    if len(memory_string) >= 2000:
+        await ctx.send("Too many variables to display! Clear the memory with !calcmc please")
+        return
+    await ctx.send(f"```\n{memory_string}```")
+
+@bot.hybrid_command(name="calcmf", description="Sends the calculator memory for functions")
+async def calcm(ctx: commands.Context):
+    '''Sends the calculator memory for functions'''
+    memory_string = ""
+    if calc_funcs == {}:
+        await ctx.send("Nothing in function memory.")
+        return
+    for func_name, func in calc_funcs.items():
+        memory_string += f"{func_name}: {func['defstr']} = {func['exprstr']}\n"
+    if len(memory_string) >= 2000:
+        await ctx.send("Too many functions to display! Clear the memory with !calcmcf please")
+        return
+    await ctx.send(f"```\n{memory_string}```")
+
+@bot.hybrid_command(name="calcmc", description="Clears the calculator memory for variables")
+async def calcmc(ctx: commands.Context):
+    '''Clears the calculator memory for variables'''
+    calc_vars.clear()
+    await ctx.send("Calculator Variable Memory Cleared.")
+
+@bot.hybrid_command(name="calcmcf", description="Clears the calculator memory for functions")
+async def calcmc(ctx: commands.Context):
+    '''Clears the calculator memory for functions'''
+    calc_funcs.clear()
+    await ctx.send("Calculator Function Memory Cleared.")
+
+# endregion
+
+answers: list[str] = ["yes definitely", "no dont pls dont", "what does that even mean??? ask chatgpt or something", "timmy says yes", "say that again i couldn't hear", "YES", "NO", "hell yeah", "ah hell no", "no.", "67"]
+# answers: list[str] = ["yaaaaa"]
+@bot.hybrid_command(name="tim", description="Ask me a yes or no question")
+async def tim(ctx: commands.Context):
+    '''Respond with a variant of yes or no.'''
+    await ctx.send(answers[random.randrange(len(answers))])
+
+import markov
+@bot.hybrid_command(name="say", description="Ask me lit anything, !sayclear if i went rogue")
+async def say(ctx: commands.Context, *, input: str):
+    '''Responds with wtv, !sayclear if i went rogue'''
+    await feed_and_say(input, ctx.message)
+
+@bot.hybrid_command(name="sayclear", description="Reset my memory")
+async def sayclear(ctx: commands.Context):
+    '''use if !say spits out some vile stuff'''
+    print(markov.words_data)
+    markov.clear_response()
+
+@bot.hybrid_command(name="echo", description="Repeats arguments")
+async def echo(ctx: commands.Context, *, text: str):
+    '''Echoes'''
+    await ctx.send(text)
+
+@bot.hybrid_command(name="kill", description="kill")
+async def kill(ctx: commands.Context, *, usr: str):
+    '''kill'''
+    text: str = usr.lower()
+    if text == "tim":
+        mod = discord.utils.find(lambda r: r.name == 'Mod', ctx.message.guild.roles)
+        if mod in ctx.author.roles:
+            await ctx.message.add_reaction("💔")
+            await ctx.send("WHAT DID I DOOO")
+            quit()
+        else:
+            await ctx.message.add_reaction("🥀")
+            await ctx.send("what are you trying to do sonion")
+            return
+    if "akube" in text or "ethan" in text or "840396811596464130" in text:
+        await ctx.send("coulndt kill them mb :<")
+    else:
+        await ctx.send(f"killed {usr} [:3](https://cdn.discordapp.com/attachments/1368475349934936195/1461135751092768831/attachment.gif?ex=6a4e3075&is=6a4cdef5&hm=800297222d8511fe7191386e3613c7f383c342959fe368ec4da8bf5f935d0c1e)")
+
+# region Mod Commands
 
 @bot.hybrid_command(name="sync_leagues", description="Add people with existing team roles to their league roles", hidden=True)
 @commands.has_role("Mod")
@@ -458,8 +702,6 @@ async def sync_leagues(ctx: commands.Context):
                     except discord.Forbidden:
                         print(f"Failed to add {member.display_name} to {league_role.name} for being on team {role.name}.")
     await message.edit(content=f"Synced leagues successfully! Added {count} member(s) to their league roles.")
-
-# region Mod Commands
 
 @bot.hybrid_command(name="add_role", description="Add a role to a user", hidden=True)
 @commands.has_role("Mod")
@@ -490,7 +732,6 @@ async def force_sync(ctx: commands.Context):
         await message.edit(content="Data sync complete!")
     except Exception as e:
         await ctx.send(f"Data sync failed: {e}")
-
 
 @bot.hybrid_command(name="sync_commands", description="Sync slash commands", hidden=True)
 @commands.has_role("Mod")
