@@ -4,16 +4,16 @@ from discord.ext import commands
 DEFAULT_ROLE_COLOR: discord.Color = discord.Color.blue()
 CACHE_FILE = "cache.json"
 LEAGUE_ID_KEY = {
-    "AL": "Albany-Commodore",
-    "ATL": "Atlanta-Marist",
-    "COL": "Columbus-Muscogee",
-    "DUG": "Douglasville",
-    "EP": "Etowah-Paulding",
-    "LEJ": "Lakeview-East Jackson",
+    "ATL": "Atlanta",
+    "COL": "Columbus",
+    "D": "Douglasville",
     "MAC": "Macon-FPDS",
-    "MW": "Marietta-Wheeler"
+    "MW": "Marietta-Wheeler",
+    "N": "North Georgia",
+    "PD": "Paulding-Dallas",
+    "T": "Thomas County"
 }
-SEASON = "2025"
+SEASON = "2026"
 
 async def is_valid_team_number(ctx: commands.Context, team_number: str, verbose: bool = True) -> bool:
     if not team_number.isdigit() or len(team_number) > 5:
